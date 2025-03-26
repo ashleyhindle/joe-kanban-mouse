@@ -7,8 +7,8 @@ A terminal-based Kanban board using Laravel Prompts, inspired by [Joe Tannenbaum
 ## Use locally
 
 ```bash
-git clone git@github.com:ashleyhindle/joe-kanban-mouse.git
-cd joe-kanban-mouse
+git clone git@github.com:ashleyhindle/kanban-mouse.git
+cd kanban-mouse
 composer install
 
 php kanban.php
