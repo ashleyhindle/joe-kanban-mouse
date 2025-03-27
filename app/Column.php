@@ -11,7 +11,9 @@ class Column
     use Boundable;
 
     public int $position;
+
     public string $title;
+
     /** @var Collection<Card> */
     public Collection $cards;
 

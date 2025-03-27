@@ -5,13 +5,15 @@ namespace App;
 class Mouse
 {
     public ?MouseButton $lastButtonDown = null;
+
     public int $x = 0;
+
     public int $y = 0;
 
     /**
      * Parse a mouse event sequence into its components
-     * @param string $sequence The full mouse event sequence
-     * @return MouseEvent
+     *
+     * @param  string  $sequence  The full mouse event sequence
      */
     public function parseEvent(string $sequence): MouseEvent
     {

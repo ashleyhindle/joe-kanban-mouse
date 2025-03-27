@@ -37,6 +37,7 @@ class Columns extends Collection
         if ($nextIndex >= $this->count()) {
             $nextIndex = 0;
         }
+
         return $this->get($nextIndex);
     }
 
@@ -52,6 +53,7 @@ class Columns extends Collection
         if ($previousIndex < 0) {
             $previousIndex = $this->count() - 1;
         }
+
         return $this->get($previousIndex);
     }
 }

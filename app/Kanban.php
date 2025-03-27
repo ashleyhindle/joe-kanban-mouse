@@ -4,7 +4,8 @@ namespace App;
 
 use Laravel\Prompts\Key;
 use Laravel\Prompts\Prompt;
-use App\Mouse;
+use App\ContextMenu;
+use App\ContextMenuOption;
 
 use function Laravel\Prompts\text;
 
@@ -15,20 +16,30 @@ class Kanban extends Prompt
     public Columns $columns;
 
     protected int $autoIncrementId = 0;
+
     public ?Card $selectedCard = null;
+
     public ?Card $hoveringCard = null;
+
     public ?Card $draggingCard = null;
+
     protected ?Card $mouseDownCard = null;
 
     public Mouse $mouse;
+
     protected ?MouseButton $lastMouseButton = null;
 
     public int $mouseDownX;
+
     public int $mouseDownY;
 
     // Card offset, so we drag the card from where we clicked in it, not from the top left of mouse pointer
     public int $draggingCardOffsetX = 0;
+
     public int $draggingCardOffsetY = 0;
+
+    public ?ContextMenu $contextMenu = null;
+    public ?ContextMenuOption $highlightedContextMenuOption = null;
 
     public function __construct()
     {
@@ -44,7 +55,7 @@ class Kanban extends Prompt
         $inProgressColumn = new Column(position: 2, title: 'In Progress');
         $doneColumn = new Column(position: 3, title: 'Done');
 
-        $this->columns = new Columns();
+        $this->columns = new Columns;
 
         $this->columns->push($todoColumn);
         $this->columns->push($inProgressColumn);
@@ -63,12 +74,13 @@ class Kanban extends Prompt
 
         $doneColumn->addCard(new Card(id: ++$this->autoIncrementId, title: 'Click & Drag', description: 'In a CLI? Dumb, but fun!', column: $doneColumn));
         $doneColumn->addCard(new Card(id: ++$this->autoIncrementId, title: 'Click a column', description: 'Switch columns!', column: $doneColumn));
+
         return $this->columns;
     }
 
     protected function setupMouseListening(): void
     {
-        $this->mouse = new Mouse();
+        $this->mouse = new Mouse;
         static::writeDirectly($this->mouse->enable()); // Enable any-event tracking (tracks all mouse events)
         register_shutdown_function(function () {
             static::writeDirectly($this->mouse->disable()); // Disable any-event tracking
@@ -80,18 +92,44 @@ class Kanban extends Prompt
         $event = $this->mouse->parseEvent($key);
         $column = $this->getColumnAtPosition($event->x, $event->y);
         $card = $this->getCardAtPosition($event->x, $event->y);
+        $contextMenuOption = $this->getContextMenuOptionAtPosition($event->x, $event->y);
+
+        if ($this->contextMenu) {
+            // They clicked outside of the available menu options, so make sure it's hidden
+            if ($event->mouseEvent !== MouseMotion::MOTION && is_null($contextMenuOption)) {
+                $this->contextMenu = null;
+            } elseif ($contextMenuOption && $event->mouseEvent === MouseMotion::MOTION) {
+                // If we're highlighting an option in the menu, we're not hovering a card
+                $this->highlightedContextMenuOption = $contextMenuOption;
+            } elseif ($contextMenuOption && $event->mouseEvent === MouseButton::RELEASED && $this->mouse->lastButtonDown === MouseButton::LEFT && $this->draggingCard === null) {
+                // They clicked on a menu option!
+                // Make sure we set 'card' and 'column' to null in case the menu is over another card/column
+                    // the bounds will match, but the click is on the upper layer of the menu, not the card layer
+                $card = null;
+                $column = null;
+                $cb = $contextMenuOption->action;
+                $cb($this);
+                $this->contextMenu = null;
+                $this->highlightedContextMenuOption = null;
+            } else {
+                $this->highlightedContextMenuOption = null;
+            }
+        }
 
         if ($column === $this->columns->active()) {
             if ($event->mouseEvent === MouseButton::WHEEL_UP) {
                 $this->selectCardAbove();
+
                 return;
             } elseif ($event->mouseEvent === MouseButton::WHEEL_DOWN) {
                 $this->selectCardBelow();
+
                 return;
             }
         } elseif ($column && $event->mouseEvent === MouseButton::RELEASED && $this->mouse->lastButtonDown === MouseButton::LEFT && $card === null && $this->draggingCard === null) {
             // We didn't click in the active column, so let's set the column they clicked in as active
             $this->setActiveColumn($column);
+
             return;
         }
 
@@ -114,37 +152,39 @@ class Kanban extends Prompt
                 $this->draggingCardOffsetY = 0;
                 $this->hoveringCard = null;
                 $this->mouseDownCard = null;
+
                 return;
             }
         }
 
         // We're not hovering, clicking, dragging, etc.. with our cursor above a card
-        if (!$card) {
+        if (! $card) {
             // If we're moving the mouse around but not over a card, reset hovering
             // But only if we're not dragging a card - a dragged card stays 'hovered' during the drag
             if ($event->mouseEvent === MouseMotion::MOTION && $this->draggingCard === null) {
                 $this->hoveringCard = null;
             }
+
             return;
         }
 
-        $cb = match($event->mouseEvent) {
+        $cb = match ($event->mouseEvent) {
             // Pushed left button down
-            MouseButton::LEFT => function() use ($card, $event) {
+            MouseButton::LEFT => function () use ($card, $event) {
                 $this->mouseDownX = $event->x;
                 $this->mouseDownY = $event->y;
                 $this->mouseDownCard = $card;
             },
 
             // Pushed right button down
-            MouseButton::RIGHT => function() { // They pushed the right button down, but $this->mouse tracks that for us, so we don't need to do anything
+            MouseButton::RIGHT => function () { // They pushed the right button down, but $this->mouse tracks that for us, so we don't need to do anything
             },
 
             // Regular mouse movement over a card, they're hovering over it
-            MouseMotion::MOTION => fn() => $this->hoveringCard = $card,
+            MouseMotion::MOTION => fn () => $this->hoveringCard = ($this->contextMenu ? null : $card), // If a menu is open, we're not hovering over a card
 
             // Mouse button released on top of a card - this is used for single clicks to move a card one column on click
-            MouseButton::RELEASED => function() use ($card, $event) {
+            MouseButton::RELEASED => function () use ($card) {
                 if ($this->draggingCard) {
                     return;
                 }
@@ -153,8 +193,24 @@ class Kanban extends Prompt
                     // This was just a click (no drag), move forward one column
                     $this->moveCard($card, $this->columns->nextColumn($card->column));
                 } elseif ($this->mouse->lastButtonDown === MouseButton::RIGHT) {
-                    // Right click, move backward one column
-                    $this->moveCard($card, $this->columns->previousColumn($card->column));
+                    // Right click, 'overlay' a right click menu
+                    // Right click menu will only have 2 options - Mark as done, or delete
+                    // As you hover over the options, they'll be highlighted with a different background color
+                    // When an option is selected, we'll do the relevant action, and 'close' the menu
+                    // The menu will be rendered where the mouse click occurred
+                    // If the user pressed escape, or clicks outside of the menu, it will close
+                    // Maybe we simple set the selected card on right click, then do 'renderMenuAtPosition($x, $y)'
+                    // Then it's easy to take action as usual, based on the selected card
+                    $this->selectedCard = $card;
+                    $contextMenuOptions = collect([]);
+                    if ($card->column->title !== 'Done') { // We're not already in the done column
+                        $contextMenuOptions->push(new ContextMenuOption('✅ Mark as done', fn (Kanban $kanban) => $kanban->moveCard($kanban->selectedCard, $kanban->columns->get(2))));
+                    } else {
+                        $contextMenuOptions->push(new ContextMenuOption('⏳ Mark in progress', fn (Kanban $kanban) => $kanban->moveCard($kanban->selectedCard, $kanban->columns->get(1))));
+                    }
+                    $contextMenuOptions->push(new ContextMenuOption($this->red('❌ Delete'), fn (Kanban $kanban) => $kanban->deleteCard($kanban->selectedCard), 'red'));
+                    // Hmm we don't know the bounds right now because we've not rendered it, we need 'getBoxoutput' to generate it, then get the width/height to set the bounds, so I guess we'll override these bounds later?
+                    $this->contextMenu = new ContextMenu($this->mouse->x, $this->mouse->y, $contextMenuOptions);
                 }
 
                 $this->mouse->lastButtonDown = null;
@@ -176,8 +232,9 @@ class Kanban extends Prompt
             $shiftPressed = false;
             $enterPressed = false;
             // Mouse events are sent as \e[M, so we need to check for that
-            if ($key[0] === "\e" && $key[2] === 'M') {
+            if ($key[0] === "\e" && strlen($key) > 2 && $key[2] === 'M') {
                 $this->listenForMouse($key);
+
                 return;
             }
 
@@ -189,10 +246,11 @@ class Kanban extends Prompt
                     Key::LEFT, Key::LEFT_ARROW => $this->previousColumn(),
                     Key::SHIFT_DOWN => $shiftPressed = true,
                     Key::ENTER => $enterPressed = true,
+                    Key::ESCAPE => $this->contextMenu = null,
                     default => null,
                 };
 
-                if (!$shiftPressed && !$enterPressed) {
+                if (! $shiftPressed && ! $enterPressed) {
                     return;
                 }
             }
@@ -201,6 +259,7 @@ class Kanban extends Prompt
             foreach (mb_str_split($key) as $key) {
                 match ($key) {
                     Key::ENTER => $enterPressed = true,
+                    Key::ESCAPE => $this->contextMenu = null,
                     Key::SHIFT_DOWN => $shiftPressed = true,
                     'n' => $this->addNewItem(),
                     'q' => $this->quit(),
@@ -214,6 +273,7 @@ class Kanban extends Prompt
                 } else {
                     $this->moveCard($this->selectedCard, $this->columns->nextColumn($this->selectedCard->column));
                 }
+
                 return;
             }
         });
@@ -271,11 +331,6 @@ class Kanban extends Prompt
         $this->setActiveColumn($newActiveColumn);
     }
 
-    /**
-     * @param Card $card
-     * @param Column $newColumn
-     * @return Card
-     */
     protected function moveCard(Card $card, Column $newColumn): Card
     {
         // Remove this card from the old column
@@ -290,6 +345,13 @@ class Kanban extends Prompt
         $this->selectedCard = $card;
 
         return $card;
+    }
+
+    protected function deleteCard(Card $card): void
+    {
+        $deletedCardColumn = $card->column;
+        $deletedCardColumn->removeCard($card);
+        $this->selectedCard = $deletedCardColumn->cards->last() ?? null;
     }
 
     protected function addNewItem(): void
@@ -361,6 +423,23 @@ class Kanban extends Prompt
                     $card->bounds->startY <= $y && $card->bounds->endY >= $y) {
                     return $card;
                 }
+            }
+        }
+
+        return null;
+    }
+
+    public function getContextMenuOptionAtPosition(int $x, int $y): ?ContextMenuOption
+    {
+        if (! $this->contextMenu) {
+            return null;
+        }
+
+        foreach ($this->contextMenu->options as $option) {
+            $withinX = $x >= $option->bounds->startX && $x <= $option->bounds->endX;
+            $withinY = $y >= $option->bounds->startY && $y <= $option->bounds->endY;
+            if ($withinX && $withinY) {
+                return $option;
             }
         }
 

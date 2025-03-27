@@ -4,14 +4,16 @@ declare(strict_types=1);
 
 namespace App;
 
-use App\Bounds;
 use SoloTerm\Grapheme\Grapheme;
 
 trait Boundable
 {
     public Bounds $bounds;
+
     public string $output;
+
     public int $width; // in columns
+
     public int $height; // in lines
     // We don't _actually_ use 'x' and 'y' pixels anywhere. X and Y is just common terminology, we're still using columns/lines.
 
